@@ -66,12 +66,15 @@ def evaluate_expression(expression: str) -> Any:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Evaluate arithmetic expressions.")
+    parser = argparse.ArgumentParser(
+        description="Evaluate arithmetic expressions from the command line or interactively."
+    )
     parser.add_argument(
         "expression",
+        nargs="?",
         help=(
             "Arithmetic expression to evaluate. Supports numbers, parentheses, "
-            "and operators +, -, *, /, and **."
+            "and operators +, -, *, /, and **. If omitted, starts an interactive mode."
         ),
     )
     return parser
@@ -80,6 +83,30 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.expression is None:
+        # Interactive mode when no expression is provided on the command line.
+        try:
+            while True:
+                try:
+                    user_input = input("Expression (or 'quit' to exit): ").strip()
+                except EOFError:
+                    print()
+                    break
+
+                if user_input.lower() in {"quit", "exit"}:
+                    break
+                if not user_input:
+                    continue
+
+                try:
+                    print(evaluate_expression(user_input))
+                except ValueError as exc:
+                    print(f"Error: {exc}")
+            return 0
+        except KeyboardInterrupt:
+            print()
+            return 130
 
     try:
         result = evaluate_expression(args.expression)
