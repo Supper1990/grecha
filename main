@@ -1,1 +1,246 @@
-hello
+#!/usr/bin/env python3
+"""Калькулятор с графическим интерфейсом и возможностью работы через CLI.
+
+- Если передано арифметическое выражение в аргументах, оно вычисляется в
+  командной строке.
+- Если выражение не передано (или указан флаг --gui), запускается окно
+  калькулятора на tkinter с кнопками и полем ввода.
+
+Поддерживаемые операторы: +, -, *, /, **, а также унарные + и -. Можно
+использовать скобки и десятичные числа.
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import operator
+import sys
+import tkinter as tk
+from functools import partial
+from typing import Any, Callable
+
+
+_OPERATORS: dict[type[ast.AST], Callable[[Any, Any], Any]] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+}
+
+
+class ExpressionEvaluator(ast.NodeVisitor):
+    """Safely evaluate a limited arithmetic expression tree."""
+
+    def visit_BinOp(self, node: ast.BinOp) -> Any:
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        operator_type = type(node.op)
+
+        if operator_type not in _OPERATORS:
+            raise ValueError(f"Unsupported operator: {ast.dump(node.op)}")
+
+        return _OPERATORS[operator_type](left, right)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        operand = self.visit(node.operand)
+        if isinstance(node.op, ast.UAdd):
+            return +operand
+        if isinstance(node.op, ast.USub):
+            return -operand
+        raise ValueError(f"Unsupported unary operator: {ast.dump(node.op)}")
+
+    def visit_Constant(self, node: ast.Constant) -> Any:
+        if isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node.value, str):
+            inner = node.value.strip()
+            try:
+                parsed_inner = ast.parse(inner, mode="eval")
+            except SyntaxError as exc:  # pragma: no cover - error path
+                raise ValueError(f"Unsupported constant: {node.value!r}") from exc
+
+            # Avoid infinite recursion on a string that only contains another string.
+            if isinstance(parsed_inner.body, ast.Constant) and isinstance(
+                parsed_inner.body.value, str
+            ):
+                raise ValueError(f"Unsupported constant: {node.value!r}")
+
+            return self.visit(parsed_inner.body)
+        raise ValueError(f"Unsupported constant: {node.value!r}")
+
+    def generic_visit(self, node: ast.AST) -> Any:  # pragma: no cover - defensive
+        raise ValueError(f"Unsupported expression element: {ast.dump(node)}")
+
+
+def evaluate_expression(expression: str) -> Any:
+    """Parse and evaluate an arithmetic expression safely."""
+
+    try:
+        parsed = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:  # pragma: no cover - error path
+        raise ValueError(f"Invalid expression: {expression}") from exc
+
+    evaluator = ExpressionEvaluator()
+    return evaluator.visit(parsed.body)
+
+
+class CalculatorGUI:
+    """Простое окно калькулятора на tkinter."""
+
+    def __init__(self) -> None:
+        self.root = tk.Tk()
+        self.root.title("Калькулятор")
+        self.root.resizable(False, False)
+
+        self.display_var = tk.StringVar()
+        self.message_var = tk.StringVar()
+
+        self._build_layout()
+
+    def _build_layout(self) -> None:
+        display = tk.Entry(
+            self.root,
+            textvariable=self.display_var,
+            font=("Helvetica", 16),
+            justify="right",
+            bd=8,
+            width=22,
+        )
+        display.grid(row=0, column=0, columnspan=4, padx=8, pady=(10, 2))
+
+        message = tk.Label(
+            self.root,
+            textvariable=self.message_var,
+            fg="red",
+            anchor="e",
+            width=28,
+        )
+        message.grid(row=1, column=0, columnspan=4, padx=8, pady=(0, 8))
+
+        buttons = [
+            ("7", 2, 0),
+            ("8", 2, 1),
+            ("9", 2, 2),
+            ("/", 2, 3),
+            ("4", 3, 0),
+            ("5", 3, 1),
+            ("6", 3, 2),
+            ("*", 3, 3),
+            ("1", 4, 0),
+            ("2", 4, 1),
+            ("3", 4, 2),
+            ("-", 4, 3),
+            ("0", 5, 0),
+            (".", 5, 1),
+            ("(", 5, 2),
+            (")", 5, 3),
+            ("**", 6, 2),
+            ("+", 6, 3),
+        ]
+
+        for text, row, col in buttons:
+            tk.Button(
+                self.root,
+                text=text,
+                width=5,
+                height=2,
+                command=partial(self.append_text, text),
+            ).grid(row=row, column=col, padx=4, pady=4)
+
+        tk.Button(
+            self.root,
+            text="⌫",
+            width=5,
+            height=2,
+            command=self.backspace,
+        ).grid(row=6, column=0, padx=4, pady=4)
+
+        tk.Button(
+            self.root,
+            text="C",
+            width=5,
+            height=2,
+            command=self.clear,
+        ).grid(row=6, column=1, padx=4, pady=4)
+
+        tk.Button(
+            self.root,
+            text="=",
+            width=23,
+            height=2,
+            bg="#f44336",
+            fg="white",
+            command=self.evaluate,
+        ).grid(row=7, column=0, columnspan=4, padx=4, pady=(0, 8))
+
+    def append_text(self, text: str) -> None:
+        self.message_var.set("")
+        self.display_var.set(self.display_var.get() + text)
+
+    def clear(self) -> None:
+        self.display_var.set("")
+        self.message_var.set("")
+
+    def backspace(self) -> None:
+        current = self.display_var.get()
+        self.display_var.set(current[:-1])
+        self.message_var.set("")
+
+    def evaluate(self) -> None:
+        expression = self.display_var.get()
+        try:
+            result = evaluate_expression(expression)
+        except ValueError as exc:
+            self.message_var.set(str(exc))
+            return
+
+        self.display_var.set(str(result))
+        self.message_var.set("")
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Вычисляет арифметическое выражение в CLI или открывает графический калькулятор."
+        )
+    )
+    parser.add_argument(
+        "expression",
+        nargs="?",
+        help=(
+            "Арифметическое выражение для вычисления. Если не передано или указан --gui,"
+            " будет запущено окно калькулятора."
+        ),
+    )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Всегда запускать графический калькулятор, игнорируя позиционный аргумент.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.gui or args.expression is None:
+        CalculatorGUI().run()
+        return 0
+
+    try:
+        result = evaluate_expression(args.expression.strip())
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    print(result)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
