@@ -1,2 +1,95 @@
 #!/usr/bin/env python3
-print("Hello, world!")
+"""Simple command-line calculator.
+
+Evaluates arithmetic expressions containing numbers, parentheses, and
+basic operators: addition (+), subtraction (-), multiplication (*),
+division (/), and exponentiation (**).
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import operator
+import sys
+from typing import Any, Callable
+
+
+_OPERATORS: dict[type[ast.AST], Callable[[Any, Any], Any]] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+}
+
+
+class ExpressionEvaluator(ast.NodeVisitor):
+    """Safely evaluate a limited arithmetic expression tree."""
+
+    def visit_BinOp(self, node: ast.BinOp) -> Any:
+        left = self.visit(node.left)
+        right = self.visit(node.right)
+        operator_type = type(node.op)
+
+        if operator_type not in _OPERATORS:
+            raise ValueError(f"Unsupported operator: {ast.dump(node.op)}")
+
+        return _OPERATORS[operator_type](left, right)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        operand = self.visit(node.operand)
+        if isinstance(node.op, ast.UAdd):
+            return +operand
+        if isinstance(node.op, ast.USub):
+            return -operand
+        raise ValueError(f"Unsupported unary operator: {ast.dump(node.op)}")
+
+    def visit_Constant(self, node: ast.Constant) -> Any:
+        if isinstance(node.value, (int, float)):
+            return node.value
+        raise ValueError(f"Unsupported constant: {node.value!r}")
+
+    def generic_visit(self, node: ast.AST) -> Any:  # pragma: no cover - defensive
+        raise ValueError(f"Unsupported expression element: {ast.dump(node)}")
+
+
+def evaluate_expression(expression: str) -> Any:
+    """Parse and evaluate an arithmetic expression safely."""
+
+    try:
+        parsed = ast.parse(expression, mode="eval")
+    except SyntaxError as exc:  # pragma: no cover - error path
+        raise ValueError(f"Invalid expression: {expression}") from exc
+
+    evaluator = ExpressionEvaluator()
+    return evaluator.visit(parsed.body)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Evaluate arithmetic expressions.")
+    parser.add_argument(
+        "expression",
+        help=(
+            "Arithmetic expression to evaluate. Supports numbers, parentheses, "
+            "and operators +, -, *, /, and **."
+        ),
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        result = evaluate_expression(args.expression)
+    except ValueError as exc:
+        parser.error(str(exc))
+        return 2
+
+    print(result)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
