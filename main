@@ -169,7 +169,7 @@ class CalculatorGUI:
             text="=",
             width=23,
             height=2,
-            bg="#4caf50",
+            bg="#f44336",
             fg="white",
             command=self.evaluate,
         ).grid(row=7, column=0, columnspan=4, padx=4, pady=(0, 8))
